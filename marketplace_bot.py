@@ -1,807 +1,354 @@
-import os
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
+from telegram.ext import Application, CommandHandler, ContextTypes, CallbackQueryHandler, MessageHandler, filters
 import json
 import logging
+import os
 from datetime import datetime
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton
-from telegram.ext import (
-    Application, CommandHandler, MessageHandler, filters,
-    ContextTypes, CallbackQueryHandler, ConversationHandler
-)
 
-# Load environment variables
-from dotenv import load_dotenv
-load_dotenv()
-
-# Enable logging
+# Setup logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    level=logging.INFO
+    level=logging.INFO,
+    handlers=[
+        logging.FileHandler('bot.log'),
+        logging.StreamHandler()
+    ]
 )
+logger = logging.getLogger(__name__)
 
-TOKEN = os.getenv('TELEGRAM_BOT_TOKEN')
-if not TOKEN:
-    logging.error("❌ No TELEGRAM_BOT_TOKEN found!")
-    exit(1)
+# Configuration
+BOT_TOKEN = os.getenv('BOT_TOKEN', 'YOUR_BOT_TOKEN_HERE')
+WEB_APP_URL = os.getenv('WEB_APP_URL', 'https://your-app.herokuapp.com')
 
-# Conversation states
-SELECTING_CATEGORY, TYPING_TITLE, TYPING_DESCRIPTION, TYPING_PRICE, TYPING_LOCATION = range(5)
+class MarketplaceBot:
+    def __init__(self):
+        self.application = Application.builder().token(BOT_TOKEN).build()
+        self.setup_handlers()
+        self.ensure_data_files()
 
-# File paths
-ITEMS_FILE = "marketplace_items.json"
-ANALYTICS_FILE = "analytics.json"
+    def ensure_data_files(self):
+        """Ensure required data files exist"""
+        default_items = [
+            {
+                "id": 1,
+                "name": "Vintage Camera",
+                "price": 89.99,
+                "description": "Beautiful vintage camera from the 1970s. Fully functional.",
+                "category": "electronics",
+                "seller": "camera_lover",
+                "image": "📷",
+                "date_added": "2024-01-15"
+            },
+            {
+                "id": 2,
+                "name": "Designer Handbag",
+                "price": 199.99,
+                "description": "Genuine leather handbag, excellent condition.",
+                "category": "fashion",
+                "seller": "fashion_guru",
+                "image": "👜",
+                "date_added": "2024-01-14"
+            },
+            {
+                "id": 3,
+                "name": "Programming Books Bundle",
+                "price": 45.50,
+                "description": "Collection of programming books for beginners to advanced.",
+                "category": "books",
+                "seller": "tech_wizard",
+                "image": "📚",
+                "date_added": "2024-01-13"
+            }
+        ]
 
-# Marketplace categories
-CATEGORIES = [
-    "📱 Electronics", "👕 Clothing", "🏠 Home & Garden", "🎮 Games & Consoles",
-    "📚 Books", "🚗 Vehicles", "💼 Jobs", "🏀 Sports", 
-    "🎨 Arts & Crafts", "🍎 Food & Drinks", "🔧 Services", "📦 Other"
-]
+        # Create marketplace_items.json if doesn't exist
+        if not os.path.exists('marketplace_items.json'):
+            with open('marketplace_items.json', 'w') as f:
+                json.dump(default_items, f, indent=2)
 
-ADMIN_USER_IDS = [365932771]
+        # Create analytics.json if doesn't exist
+        if not os.path.exists('analytics.json'):
+            with open('analytics.json', 'w') as f:
+                json.dump({"users": {}, "commands": {}, "webapp_opens": 0}, f, indent=2)
 
-# ========== BUTTON LAYOUTS ==========
+    def setup_handlers(self):
+        """Setup bot handlers"""
+        self.application.add_handler(CommandHandler("start", self.start))
+        self.application.add_handler(CommandHandler("marketplace", self.marketplace))
+        self.application.add_handler(CommandHandler("add_item", self.add_item))
+        self.application.add_handler(CommandHandler("analytics", self.analytics))
+        self.application.add_handler(CallbackQueryHandler(self.button_handler))
+        self.application.add_handler(MessageHandler(filters.StatusUpdate.WEB_APP_DATA, self.handle_webapp_data))
+        self.application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handle_message))
 
-def main_menu_buttons():
-    """Main menu buttons"""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛍️ Browse Items", callback_data="main_browse")],
-        [InlineKeyboardButton("📦 Sell Item", callback_data="main_sell")],
-        [InlineKeyboardButton("📋 My Items", callback_data="main_myitems")],
-        [InlineKeyboardButton("🆕 Recent Listings", callback_data="main_recent"),
-         InlineKeyboardButton("❓ Help", callback_data="main_help")]
-    ])
-
-def category_buttons(action_prefix="category"):
-    """Category selection buttons"""
-    keyboard = []
-    for i in range(0, len(CATEGORIES), 3):
-        row = []
-        for j in range(3):
-            if i + j < len(CATEGORIES):
-                row.append(InlineKeyboardButton(
-                    CATEGORIES[i + j], 
-                    callback_data=f"{action_prefix}_{i + j}"
-                ))
-        if row:
-            keyboard.append(row)
-    keyboard.append([InlineKeyboardButton("🔙 Back to Main Menu", callback_data="main_menu")])
-    return InlineKeyboardMarkup(keyboard)
-
-def browse_navigation_buttons(items, current_index, category_index=None):
-    """Navigation buttons for browsing items"""
-    buttons = []
-    
-    # Contact Seller Button
-    if items and current_index < len(items):
-        item = items[current_index]
-        if item.get('seller_username'):
-            buttons.append([InlineKeyboardButton(
-                "📞 Contact Seller", 
-                url=f"https://t.me/{item['seller_username']}"
-            )])
-        else:
-            buttons.append([InlineKeyboardButton(
-                "📞 Seller (No Username)", 
-                callback_data="no_username"
-            )])
-    
-    # Navigation Buttons
-    nav_buttons = []
-    if current_index > 0:
-        nav_buttons.append(InlineKeyboardButton("◀️ Previous", callback_data=f"nav_{current_index-1}"))
-    
-    nav_buttons.append(InlineKeyboardButton(f"{current_index+1}/{len(items)}", callback_data="page_info"))
-    
-    if current_index < len(items) - 1:
-        nav_buttons.append(InlineKeyboardButton("Next ▶️", callback_data=f"nav_{current_index+1}"))
-    
-    if nav_buttons:
-        buttons.append(nav_buttons)
-    
-    # Action Buttons
-    action_buttons = []
-    if category_index is not None:
-        action_buttons.append(InlineKeyboardButton("📂 Back to Categories", callback_data="back_categories"))
-    action_buttons.append(InlineKeyboardButton("🛍️ Browse More", callback_data="main_browse"))
-    action_buttons.append(InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu"))
-    
-    buttons.append(action_buttons)
-    
-    return InlineKeyboardMarkup(buttons)
-
-def sell_flow_buttons():
-    """Buttons for sell flow"""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🚫 Cancel Listing", callback_data="cancel_sell")],
-        [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
-    ])
-
-def quick_action_buttons():
-    """Quick action buttons for various screens"""
-    return InlineKeyboardMarkup([
-        [InlineKeyboardButton("🛍️ Browse", callback_data="main_browse"),
-         InlineKeyboardButton("📦 Sell", callback_data="main_sell")],
-        [InlineKeyboardButton("📋 My Items", callback_data="main_myitems"),
-         InlineKeyboardButton("🆕 Recent", callback_data="main_recent")],
-        [InlineKeyboardButton("❓ Help", callback_data="main_help")]
-    ])
-
-# ========== DATA MANAGEMENT ==========
-
-def load_items():
-    try:
-        with open(ITEMS_FILE, 'r') as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError):
-        return []
-
-def save_items(items):
-    try:
-        with open(ITEMS_FILE, 'w') as f:
-            json.dump(items, f, indent=2)
-    except Exception as e:
-        logging.error(f"Error saving items: {e}")
-
-def load_analytics():
-    try:
-        with open(ANALYTICS_FILE, 'r') as f:
-            data = json.load(f)
-            data['active_users'] = set(data.get('active_users', []))
-            return data
-    except (FileNotFoundError, json.JSONDecodeError):
-        return {'total_users': 0, 'active_users': set(), 'items_listed': 0}
-
-def save_analytics(data):
-    try:
-        data_to_save = data.copy()
-        data_to_save['active_users'] = list(data['active_users'])
-        with open(ANALYTICS_FILE, 'w') as f:
-            json.dump(data_to_save, f, indent=2)
-    except Exception as e:
-        logging.error(f"Error saving analytics: {e}")
-
-def track_user(user_id, username):
-    try:
-        analytics = load_analytics()
-        if user_id not in analytics['active_users']:
-            analytics['active_users'].add(user_id)
-            analytics['total_users'] = len(analytics['active_users'])
-            save_analytics(analytics)
-            print(f"🎉 New user: {username} - Total: {analytics['total_users']}")
-    except Exception as e:
-        print(f"Error tracking user: {e}")
-
-def track_item_listed():
-    try:
-        analytics = load_analytics()
-        analytics['items_listed'] = analytics.get('items_listed', 0) + 1
-        save_analytics(analytics)
-        print(f"📦 New item listed. Total: {analytics['items_listed']}")
-    except Exception as e:
-        print(f"Error tracking item: {e}")
-
-def get_user_items(user_id):
-    items = load_items()
-    return [item for item in items if item.get('seller_id') == user_id]
-
-def get_items_by_category(category):
-    items = load_items()
-    return [item for item in items if item.get('category') == category and item.get('active', True)]
-
-def get_recent_items(limit=10):
-    items = load_items()
-    items.sort(key=lambda x: x.get('timestamp', ''), reverse=True)
-    return items[:limit]
-
-def is_admin(user_id):
-    return user_id in ADMIN_USER_IDS
-
-def get_time_ago(timestamp):
-    try:
-        item_time = datetime.fromisoformat(timestamp)
-        now = datetime.now()
-        diff = now - item_time
+    async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /start command"""
+        user = update.effective_user
+        self.update_analytics('start', user.id)
         
-        if diff.days > 0:
-            return f"{diff.days}d ago"
-        elif diff.seconds > 3600:
-            return f"{diff.seconds // 3600}h ago"
-        elif diff.seconds > 60:
-            return f"{diff.seconds // 60}m ago"
-        else:
-            return "just now"
-    except:
-        return "recently"
-
-# ========== BOT COMMANDS WITH BUTTONS ==========
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start command with main menu buttons and persistent keyboard button"""
-    try:
-        user = update.message.from_user
-        track_user(user.id, user.username)
-        
-        analytics = load_analytics()
-        items_count = len(load_items())
+        keyboard = [
+            [InlineKeyboardButton("🛍️ Open Marketplace", web_app=WebAppInfo(url=WEB_APP_URL))],
+            [InlineKeyboardButton("📱 View Items in Chat", callback_data="view_items")],
+            [InlineKeyboardButton("➕ Add New Item", callback_data="add_item"),
+             InlineKeyboardButton("📊 Analytics", callback_data="analytics")]
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
         
         welcome_text = f"""
-🏪 **Welcome to Merkato Marketplace, {user.first_name}!** 
+👋 Welcome to Marketplace Bot, {user.first_name}!
 
-🤖 *Your community marketplace for buying and selling*
+🛍️ **Features:**
+• Browse items in full-screen web app
+• Add your own items for sale
+• Real-time marketplace updates
+• Secure transactions
 
-📊 **Marketplace Stats:**
-• 👥 {analytics['total_users']} users
-• 📦 {items_count} items listed
-• 🏷️ {len(CATEGORIES)} categories
-
-💡 **Choose an action below or use commands:**
-`/sell` - List item | `/buy` - Browse | `/myitems` - Your items
+Choose an option below to get started!
         """
         
-        await update.message.reply_text(
-            welcome_text,
-            reply_markup=main_menu_buttons(),
-            parse_mode='Markdown'
-        )
-        
-        # Add persistent keyboard button at bottom
-        persistent_keyboard = ReplyKeyboardMarkup(
-            [[KeyboardButton("Marketplace")]],
-            resize_keyboard=True,
-            one_time_keyboard=False
-        )
-        await update.message.reply_text(
-            "Use the button below for quick access:",
-            reply_markup=persistent_keyboard
-        )
-    except Exception as e:
-        print(f"Error in start: {e}")
-        await update.message.reply_text(
-            "❌ Error loading bot. Please try again.",
-            reply_markup=quick_action_buttons()
-        )
+        await update.message.reply_text(welcome_text, reply_markup=reply_markup)
 
-# ========== HANDLER FOR MARKETPLACE BUTTON ==========
-
-async def marketplace_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handler for the 'Marketplace' button to show selling items"""
-    try:
-        user = update.message.from_user
-        items = get_user_items(user.id)
+    async def marketplace(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /marketplace command - direct web app access"""
+        user = update.effective_user
+        self.update_analytics('marketplace', user.id)
         
-        if not items:
-            text = "📭 **You haven't listed any items yet!**\n\nStart selling and make your first listing! 🎉"
-            await update.message.reply_text(text, reply_markup=main_menu_buttons())
-            return
-        
-        text = f"📋 **Your Listed Items** ({len(items)} total)\n\n"
-        for i, item in enumerate(items, 1):
-            time_ago = get_time_ago(item.get('timestamp', ''))
-            text += f"**{i}. {item['title']}**\n"
-            text += f"   💰 {item['price']} | 📍 {item['location']}\n"
-            text += f"   🏷️ {item['category']} | 🕒 {time_ago}\n\n"
-        
-        await update.message.reply_text(text, reply_markup=main_menu_buttons())
-    except Exception as e:
-        print(f"Error in marketplace_button_handler: {e}")
-        await update.message.reply_text("❌ Error loading your items.", reply_markup=main_menu_buttons())
-
-
-async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Help command with quick actions"""
-    help_text = """
-🤖 **Merkato Marketplace - Complete Guide**
-
-🛍️ **BUYING:**
-• Browse items by category
-• Contact sellers directly
-• Negotiate prices
-• Meet safely
-
-📦 **SELLING:**
-• List items in 5 easy steps
-• Set your price
-• Describe item condition
-• Choose pickup location
-
-⚡ **QUICK COMMANDS:**
-`/start` - Main menu
-`/sell` - List item for sale  
-`/buy` - Browse items
-`/myitems` - Your listings
-`/recent` - Newest items
-`/help` - This message
-
-🛡️ **SAFETY TIPS:**
-• Meet in public places
-• Inspect before buying
-• Use secure payments
-• Trust your instincts
-    """
-    
-    if update.message:
-        await update.message.reply_text(help_text, parse_mode='Markdown', reply_markup=quick_action_buttons())
-    else:
-        query = update.callback_query
-        await query.edit_message_text(help_text, parse_mode='Markdown', reply_markup=quick_action_buttons())
-
-async def recent_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Recent listings with browse buttons"""
-    try:
-        recent_items = get_recent_items(limit=6)
-        
-        if not recent_items:
-            text = "📭 **No items available yet!**\n\nBe the first to list something! 🎉"
-            await show_message(update, text, main_menu_buttons())
-            return
-        
-        text = "🆕 **Recent Listings**\n\n"
-        for i, item in enumerate(recent_items, 1):
-            time_ago = get_time_ago(item.get('timestamp', ''))
-            text += f"**{i}. {item['title']}**\n"
-            text += f"   💰 {item['price']} | 📍 {item['location']}\n"
-            text += f"   👤 {item['seller_name']} | 🕒 {time_ago}\n\n"
-        
-        text += "💡 *Browse categories to see all available items*"
-        
-        await show_message(update, text, InlineKeyboardMarkup([
-            [InlineKeyboardButton("🛍️ Browse All Categories", callback_data="main_browse")],
-            [InlineKeyboardButton("📦 List Your Item", callback_data="main_sell")],
-            [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
-        ]))
-    except Exception as e:
-        print(f"Error in recent: {e}")
-        await show_message(update, "❌ Error loading recent items.", quick_action_buttons())
-
-# ========== BUY FLOW WITH BUTTONS ==========
-
-async def browse_categories(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Browse categories with buttons"""
-    text = "🛍️ **Browse Marketplace**\n\nChoose a category to explore items:"
-    await show_message(update, text, category_buttons("browse"))
-
-async def show_category_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show items in selected category"""
-    try:
-        query = update.callback_query
-        await query.answer()
-        
-        category_index = int(query.data.split('_')[1])
-        category = CATEGORIES[category_index]
-        items = get_items_by_category(category)
-        
-        if not items:
-            text = f"📭 **No items in {category}**\n\nBe the first to list something in this category! 🎉"
-            await query.edit_message_text(
-                text,
-                reply_markup=InlineKeyboardMarkup([
-                    [InlineKeyboardButton("📦 List Item Here", callback_data="main_sell")],
-                    [InlineKeyboardButton("📂 Other Categories", callback_data="main_browse")],
-                    [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
-                ]),
-                parse_mode='Markdown'
-            )
-            return
-        
-        # Store category context for navigation
-        context.user_data['current_category'] = category_index
-        await show_item_detail(update, context, items, 0)
-        
-    except Exception as e:
-        print(f"Error in show_category_items: {e}")
-        await show_message(update, "❌ Error loading category.", main_menu_buttons())
-
-async def show_item_detail(update: Update, context: ContextTypes.DEFAULT_TYPE, items=None, index=0):
-    """Show item details with navigation buttons"""
-    try:
-        if items is None:
-            items = load_items()
-        
-        if not items:
-            await show_message(update, "📭 No items available.", main_menu_buttons())
-            return
-        
-        item = items[index]
-        time_ago = get_time_ago(item.get('timestamp', ''))
-        
-        item_text = f"""
-🏷️ **{item['title']}**
-💰 **Price:** {item['price']}
-📍 **Location:** {item['location']}
-📁 **Category:** {item['category']}
-🕒 **Listed:** {time_ago}
-
-📝 **Description:**
-{item['description']}
-
-👤 **Seller:** {item['seller_name']}
-{('@' + item['seller_username']) if item['seller_username'] else '📞 (No username - cannot contact directly)'}
-        """
-        
-        # Get category context for back button
-        category_index = context.user_data.get('current_category')
-        
-        await show_message(
-            update, 
-            item_text, 
-            browse_navigation_buttons(items, index, category_index)
-        )
-        
-        # Store for navigation
-        context.user_data['browse_items'] = items
-        context.user_data['browse_index'] = index
-        
-    except Exception as e:
-        print(f"Error in show_item_detail: {e}")
-        await show_message(update, "❌ Error loading item.", main_menu_buttons())
-
-async def navigate_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Navigate between items using buttons"""
-    try:
-        query = update.callback_query
-        await query.answer()
-        
-        index = int(query.data.split('_')[1])
-        items = context.user_data.get('browse_items', load_items())
-        
-        if 0 <= index < len(items):
-            await show_item_detail(update, context, items, index)
-        else:
-            await query.answer("❌ No more items in this direction", show_alert=True)
-            
-    except Exception as e:
-        print(f"Error in navigate_items: {e}")
-        await query.answer("❌ Navigation error", show_alert=True)
-
-# ========== SELL FLOW WITH BUTTONS ==========
-
-async def start_sell_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Start selling with category buttons"""
-    text = "📦 **List Item for Sale**\n\nFirst, choose a category for your item:"
-    await show_message(update, text, category_buttons("sell_category"))
-
-async def sell_category_selected(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handle category selection for selling"""
-    try:
-        query = update.callback_query
-        await query.answer()
-        
-        category_index = int(query.data.split('_')[1])
-        context.user_data['sell_category'] = CATEGORIES[category_index]
-        
-        await query.edit_message_text(
-            f"📝 **Category:** {CATEGORIES[category_index]}\n\n"
-            "Now send me the **title** of your item:\n"
-            "*Example: 'iPhone 13 Pro Max 256GB'*",
-            parse_mode='Markdown',
-            reply_markup=sell_flow_buttons()
-        )
-        
-        return TYPING_TITLE
-    except Exception as e:
-        print(f"Error in sell_category_selected: {e}")
-        return ConversationHandler.END
-
-async def sell_title_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive item title"""
-    context.user_data['sell_title'] = update.message.text
-    
-    await update.message.reply_text(
-        "📋 **Great!** Now send me the **description**:\n\n"
-        "Include details like:\n"
-        "• Condition (new/used)\n"  
-        "• Features & specifications\n"
-        "• Reason for selling\n"
-        "• Any defects",
-        reply_markup=sell_flow_buttons()
-    )
-    
-    return TYPING_DESCRIPTION
-
-async def sell_description_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive item description"""
-    context.user_data['sell_description'] = update.message.text
-    
-    await update.message.reply_text(
-        "💰 Now send me the **price**:\n\n"
-        "*Examples:*\n"
-        "• '15000 ETB'\n"
-        "• '100 USD'\n" 
-        "• '5000 negotiable'\n"
-        "• 'Free'",
-        parse_mode='Markdown',
-        reply_markup=sell_flow_buttons()
-    )
-    
-    return TYPING_PRICE
-
-async def sell_price_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Receive item price"""
-    context.user_data['sell_price'] = update.message.text
-    
-    await update.message.reply_text(
-        "📍 Finally, send me your **location**:\n\n"
-        "*Examples:*\n"
-        "• 'Addis Ababa, Bole'\n"
-        "• 'Online Delivery'\n"
-        "• 'City Mall pickup'\n"
-        "• 'Specific address (share privately)'",
-        parse_mode='Markdown',
-        reply_markup=sell_flow_buttons()
-    )
-    
-    return TYPING_LOCATION
-
-async def sell_location_received(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Complete selling flow and save item"""
-    try:
-        context.user_data['sell_location'] = update.message.text
-        user = update.message.from_user
-        
-        # Create item
-        item = {
-            'id': len(load_items()) + 1,
-            'seller_id': user.id,
-            'seller_name': user.first_name,
-            'seller_username': user.username,
-            'title': context.user_data.get('sell_title', ''),
-            'description': context.user_data.get('sell_description', ''),
-            'price': context.user_data.get('sell_price', ''),
-            'category': context.user_data.get('sell_category', ''),
-            'location': context.user_data.get('sell_location', ''),
-            'timestamp': datetime.now().isoformat(),
-            'active': True
-        }
-        
-        # Save item
-        items = load_items()
-        items.append(item)
-        save_items(items)
-        track_item_listed()
-        
-        # Clear data
-        context.user_data.clear()
-        
-        # Success message
-        success_text = f"""
-✅ **Item Listed Successfully!**
-
-🏷️ **Title:** {item['title']}
-📁 **Category:** {item['category']}  
-💰 **Price:** {item['price']}
-📍 **Location:** {item['location']}
-
-**What's next?**
-• Buyers can find your item in `/buy`
-• View with `/myitems`
-• Be ready for buyer messages!
-
-🎉 *Thank you for using Merkato Marketplace!*
-        """
-        
-        await update.message.reply_text(
-            success_text,
-            parse_mode='Markdown',
-            reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("🛍️ Browse Other Items", callback_data="main_browse")],
-                [InlineKeyboardButton("📋 View My Items", callback_data="main_myitems")],
-                [InlineKeyboardButton("📦 List Another", callback_data="main_sell")],
-                [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
-            ])
-        )
-        
-        return ConversationHandler.END
-        
-    except Exception as e:
-        print(f"Error in sell_location_received: {e}")
-        await update.message.reply_text(
-            "❌ Error saving your item. Please try /sell again.",
-            reply_markup=main_menu_buttons()
-        )
-        return ConversationHandler.END
-
-async def cancel_sell(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Cancel selling flow"""
-    context.user_data.clear()
-    await show_message(update, "❌ Item listing cancelled.", main_menu_buttons())
-    return ConversationHandler.END
-
-# ========== MY ITEMS WITH BUTTONS ==========
-
-async def show_my_items(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Show user's items with management buttons"""
-    try:
-        user_id = update.effective_user.id
-        items = get_user_items(user_id)
-        
-        if not items:
-            text = "📭 **You haven't listed any items yet!**\n\nStart selling and make your first listing! 🎉"
-            await show_message(update, text, InlineKeyboardMarkup([
-                [InlineKeyboardButton("📦 List First Item", callback_data="main_sell")],
-                [InlineKeyboardButton("🛍️ Browse Marketplace", callback_data="main_browse")],
-                [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
-            ]))
-            return
-        
-        text = f"📋 **Your Listed Items** ({len(items)} total)\n\n"
-        for i, item in enumerate(items, 1):
-            time_ago = get_time_ago(item.get('timestamp', ''))
-            text += f"**{i}. {item['title']}**\n"
-            text += f"   💰 {item['price']} | 📍 {item['location']}\n"
-            text += f"   🏷️ {item['category']} | 🕒 {time_ago}\n\n"
-        
-        await show_message(update, text, InlineKeyboardMarkup([
-            [InlineKeyboardButton("📦 List New Item", callback_data="main_sell")],
-            [InlineKeyboardButton("🛍️ Browse Marketplace", callback_data="main_browse")],
-            [InlineKeyboardButton("🆕 Recent Listings", callback_data="main_recent")],
-            [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
-        ]))
-        
-    except Exception as e:
-        print(f"Error in show_my_items: {e}")
-        await show_message(update, "❌ Error loading your items.", main_menu_buttons())
-
-# ========== ADMIN COMMANDS WITH BUTTONS ==========
-
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Admin statistics with refresh button"""
-    try:
-        user_id = update.effective_user.id
-        
-        if not is_admin(user_id):
-            await show_message(update, "❌ Admin access required.", main_menu_buttons())
-            return
-        
-        analytics = load_analytics()
-        items = load_items()
-        
-        stats_text = f"""
-📊 **Admin Dashboard**
-
-👥 **Users:** {analytics['total_users']}
-📦 **Total Items:** {len(items)}
-🔄 **Items Today:** {len([i for i in items if datetime.fromisoformat(i['timestamp']).date() == datetime.now().date()])}
-
-🏷️ **Category Distribution:**
-"""
-        # Category stats
-        category_stats = {}
-        for item in items:
-            cat = item.get('category', 'Unknown')
-            category_stats[cat] = category_stats.get(cat, 0) + 1
-        
-        for category in CATEGORIES:
-            count = category_stats.get(category, 0)
-            stats_text += f"• {category}: {count}\n"
-        
-        stats_text += f"\n🕒 **Last Updated:** {datetime.now().strftime('%H:%M:%S')}"
-        
-        await show_message(update, stats_text, InlineKeyboardMarkup([
-            [InlineKeyboardButton("🔄 Refresh Stats", callback_data="admin_refresh")],
-            [InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]
-        ]))
-        
-    except Exception as e:
-        print(f"Error in admin_stats: {e}")
-        await show_message(update, "❌ Error loading stats.", main_menu_buttons())
-
-# ========== UNIVERSAL BUTTON HANDLER ==========
-
-async def handle_button_press(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Main button handler for all inline keyboard actions"""
-    try:
-        query = update.callback_query
-        data = query.data
-        
-        # Main menu actions
-        if data == "main_menu":
-            await start(update, context)
-        elif data == "main_browse":
-            await browse_categories(update, context)
-        elif data == "main_sell":
-            await start_sell_flow(update, context)
-        elif data == "main_myitems":
-            await show_my_items(update, context)
-        elif data == "main_recent":
-            await recent_command(update, context)
-        elif data == "main_help":
-            await help_command(update, context)
-        
-        # Browse actions
-        elif data.startswith("browse_"):
-            await show_category_items(update, context)
-        elif data.startswith("nav_"):
-            await navigate_items(update, context)
-        elif data == "back_categories":
-            await browse_categories(update, context)
-        
-        # Sell actions  
-        elif data.startswith("sell_category_"):
-            await sell_category_selected(update, context)
-        elif data == "cancel_sell":
-            await cancel_sell(update, context)
-        
-        # Admin actions
-        elif data == "admin_refresh":
-            await admin_stats(update, context)
-        
-        # Info actions
-        elif data == "no_username":
-            await query.answer("This seller hasn't set a Telegram username.", show_alert=True)
-        elif data == "page_info":
-            await query.answer()  # Silent acknowledgement
-        
-        else:
-            await query.answer("❌ Action not available", show_alert=True)
-            
-    except Exception as e:
-        print(f"Error in button handler: {e}")
-        await query.answer("❌ Error processing action", show_alert=True)
-
-# ========== HELPER FUNCTIONS ==========
-
-async def show_message(update, text, reply_markup):
-    """Helper to show messages for both messages and callback queries"""
-    if update.message:
-        await update.message.reply_text(text, reply_markup=reply_markup, parse_mode='Markdown')
-    else:
-        query = update.callback_query
-        await query.edit_message_text(text, reply_markup=reply_markup, parse_mode='Markdown')
-
-# ========== MAIN APPLICATION ==========
-
-def main():
-    """Start the bot with all handlers"""
-    print("🚀 Starting Enhanced Marketplace Bot with Buttons...")
-    print(f"✅ Token: {TOKEN[:10]}...")
-    print(f"✅ Admin ID: {ADMIN_USER_IDS[0]}")
-    
-    # Load initial data
-    analytics = load_analytics()
-    items = load_items()
-    print(f"📊 Preloaded: {analytics['total_users']} users, {len(items)} items")
-    
-    # Create application
-    application = Application.builder().token(TOKEN).build()
-    
-    # Sell conversation handler
-    sell_conv_handler = ConversationHandler(
-        entry_points=[
-            CommandHandler('sell', start_sell_flow),
-            CallbackQueryHandler(start_sell_flow, pattern='^main_sell$')
-        ],
-        states={
-            SELECTING_CATEGORY: [CallbackQueryHandler(sell_category_selected, pattern='^sell_category_')],
-            TYPING_TITLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, sell_title_received)],
-            TYPING_DESCRIPTION: [MessageHandler(filters.TEXT & ~filters.COMMAND, sell_description_received)],
-            TYPING_PRICE: [MessageHandler(filters.TEXT & ~filters.COMMAND, sell_price_received)],
-            TYPING_LOCATION: [MessageHandler(filters.TEXT & ~filters.COMMAND, sell_location_received)],
-        },
-        fallbacks=[
-            CommandHandler('cancel', cancel_sell),
-            CallbackQueryHandler(cancel_sell, pattern='^cancel_sell$')
+        keyboard = [
+            [InlineKeyboardButton("🛍️ Open Full Marketplace", web_app=WebAppInfo(url=WEB_APP_URL))],
+            [InlineKeyboardButton("📱 Quick Browse in Chat", callback_data="view_items")]
         ]
-    )
-    
-    # Add all handlers
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("help", help_command))
-    application.add_handler(CommandHandler("buy", browse_categories))
-    application.add_handler(CommandHandler("myitems", show_my_items))
-    application.add_handler(CommandHandler("recent", recent_command))
-    application.add_handler(CommandHandler("stats", admin_stats))
-    application.add_handler(sell_conv_handler)
-    
-    # Add handler for Marketplace button text message
-    application.add_handler(MessageHandler(filters.Regex("^Marketplace$"), marketplace_button_handler))
-    
-    # Button handler (must be last)
-    application.add_handler(CallbackQueryHandler(handle_button_press))
-    
-    # Start bot
-    print("✅ Bot is running with full button functionality!")
-    print("🎯 Users can navigate entirely with buttons")
-    application.run_polling()
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        await update.message.reply_text(
+            "🎯 **Marketplace Access**\n\n"
+            "Choose how you want to browse our marketplace:",
+            reply_markup=reply_markup
+        )
+
+    async def add_item(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /add_item command"""
+        user = update.effective_user
+        self.update_analytics('add_item', user.id)
+        
+        # In a real implementation, you'd use a conversation handler
+        # For now, we'll provide instructions
+        instructions = """
+📦 **How to Add an Item:**
+
+1. Use the format:
+   `/add_item Name | Price | Description | Category`
+
+2. Example:
+   `/add_item Vintage Watch | 75.00 | Beautiful antique watch | fashion`
+
+3. Categories: electronics, fashion, books, home, other
+
+Or use the web app for an easier experience!
+        """
+        
+        await update.message.reply_text(instructions)
+
+    async def analytics(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle /analytics command (admin only)"""
+        user = update.effective_user
+        self.update_analytics('analytics', user.id)
+        
+        try:
+            with open('analytics.json', 'r') as f:
+                analytics_data = json.load(f)
+            
+            total_users = len(analytics_data.get('users', {}))
+            webapp_opens = analytics_data.get('webapp_opens', 0)
+            commands_used = sum(analytics_data.get('commands', {}).values())
+            
+            stats_text = f"""
+📊 **Bot Analytics**
+
+👥 Total Users: {total_users}
+🛍️ Web App Opens: {webapp_opens}
+📋 Commands Used: {commands_used}
+
+**Command Usage:**
+"""
+            for cmd, count in analytics_data.get('commands', {}).items():
+                stats_text += f"• /{cmd}: {count}\n"
+                
+            await update.message.reply_text(stats_text)
+            
+        except Exception as e:
+            logger.error(f"Error reading analytics: {e}")
+            await update.message.reply_text("❌ Could not load analytics data.")
+
+    async def button_handler(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle inline button clicks"""
+        query = update.callback_query
+        await query.answer()
+        
+        user = query.from_user
+        
+        if query.data == "view_items":
+            await self.show_items_in_chat(update, context)
+        elif query.data == "add_item":
+            await self.add_item(update, context)
+        elif query.data == "analytics":
+            await self.analytics(update, context)
+
+    async def show_items_in_chat(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Show marketplace items directly in chat"""
+        try:
+            with open('marketplace_items.json', 'r') as f:
+                items = json.load(f)
+            
+            if not items:
+                await update.callback_query.message.reply_text("🏪 The marketplace is empty! Be the first to add an item. 🎉")
+                return
+            
+            message = "🏪 **Marketplace Items**\n\n"
+            for item in items[:8]:  # Show first 8 items
+                message += f"{item.get('image', '📦')} **{item.get('name', 'Unknown')}**\n"
+                message += f"💵 **${item.get('price', 0)}** | 👤 {item.get('seller', 'Unknown')}\n"
+                message += f"📝 {item.get('description', '')[:80]}...\n"
+                message += f"🏷️ {item.get('category', 'other').title()}\n"
+                message += "─" * 30 + "\n"
+            
+            keyboard = [
+                [InlineKeyboardButton("🛍️ Open Full Marketplace", web_app=WebAppInfo(url=WEB_APP_URL))],
+                [InlineKeyboardButton("➕ Add Your Item", callback_data="add_item")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
+            
+            await update.callback_query.message.reply_text(message, reply_markup=reply_markup)
+            
+        except Exception as e:
+            logger.error(f"Error showing items: {e}")
+            await update.callback_query.message.reply_text("❌ Error loading marketplace items.")
+
+    async def handle_webapp_data(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle data sent from the Web App"""
+        web_app_data = update.effective_message.web_app_data
+        user = update.effective_user
+        
+        if web_app_data:
+            try:
+                data = json.loads(web_app_data.data)
+                action = data.get('action')
+                
+                # Update analytics for web app usage
+                self.update_analytics('webapp_interaction', user.id)
+                with open('analytics.json', 'r+') as f:
+                    analytics = json.load(f)
+                    analytics['webapp_opens'] = analytics.get('webapp_opens', 0) + 1
+                    f.seek(0)
+                    json.dump(analytics, f, indent=2)
+                    f.truncate()
+                
+                if action == "purchase":
+                    item_id = data.get('item_id')
+                    await update.message.reply_text(
+                        f"✅ Purchase initiated! Item ID: {item_id}\n\n"
+                        f"The seller will contact you shortly to arrange the details. "
+                        f"Please discuss payment and delivery methods with them."
+                    )
+                elif action == "contact_seller":
+                    seller = data.get('seller')
+                    await update.message.reply_text(
+                        f"📞 Contacting seller: @{seller}\n\n"
+                        f"I've notified them about your interest. They should message you soon!"
+                    )
+                    
+            except json.JSONDecodeError as e:
+                logger.error(f"WebApp data JSON error: {e}")
+                await update.message.reply_text("❌ Error processing your request.")
+            except Exception as e:
+                logger.error(f"WebApp data error: {e}")
+                await update.message.reply_text("❌ An error occurred.")
+
+    async def handle_message(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Handle regular text messages"""
+        user = update.effective_user
+        text = update.message.text
+        
+        # Simple add item via text (basic implementation)
+        if text.startswith('/add_item'):
+            await self.process_add_item(update, context)
+        else:
+            # Help response for other messages
+            await update.message.reply_text(
+                "🤔 Need help? Use /start to see all options or /marketplace to browse items!"
+            )
+
+    async def process_add_item(self, update: Update, context: ContextTypes.DEFAULT_TYPE):
+        """Process adding an item via text command"""
+        try:
+            parts = update.message.text.split('|')
+            if len(parts) < 4:
+                await update.message.reply_text(
+                    "❌ Invalid format. Use:\n"
+                    "`/add_item Name | Price | Description | Category`"
+                )
+                return
+            
+            name = parts[0].replace('/add_item', '').strip()
+            price = float(parts[1].strip())
+            description = parts[2].strip()
+            category = parts[3].strip().lower()
+            
+            new_item = {
+                "id": datetime.now().timestamp(),
+                "name": name,
+                "price": price,
+                "description": description,
+                "category": category,
+                "seller": update.effective_user.username or f"user_{update.effective_user.id}",
+                "image": "📦",
+                "date_added": datetime.now().strftime("%Y-%m-%d")
+            }
+            
+            # Add to items file
+            with open('marketplace_items.json', 'r+') as f:
+                items = json.load(f)
+                items.append(new_item)
+                f.seek(0)
+                json.dump(items, f, indent=2)
+                f.truncate()
+            
+            await update.message.reply_text(
+                f"✅ Item added successfully!\n\n"
+                f"**{name}** - ${price}\n"
+                f"Category: {category.title()}\n\n"
+                f"View it in the marketplace! 🛍️"
+            )
+            
+        except ValueError as e:
+            await update.message.reply_text("❌ Invalid price format. Please use numbers only for price.")
+        except Exception as e:
+            logger.error(f"Error adding item: {e}")
+            await update.message.reply_text("❌ Error adding item. Please check the format.")
+
+    def update_analytics(self, command: str, user_id: int):
+        """Update analytics data"""
+        try:
+            with open('analytics.json', 'r+') as f:
+                analytics = json.load(f)
+                
+                # Update user count
+                analytics['users'][str(user_id)] = datetime.now().isoformat()
+                
+                # Update command count
+                analytics['commands'][command] = analytics['commands'].get(command, 0) + 1
+                
+                f.seek(0)
+                json.dump(analytics, f, indent=2)
+                f.truncate()
+                
+        except Exception as e:
+            logger.error(f"Analytics update error: {e}")
+
+    def run(self):
+        """Start the bot"""
+        logger.info("Starting Marketplace Bot...")
+        self.application.run_polling()
 
 if __name__ == '__main__':
-    main()
+    bot = MarketplaceBot()
+    bot.run()
