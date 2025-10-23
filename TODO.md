@@ -1,0 +1,5 @@
+- [x] Step 1: Modify button_handler to set 'editing' flag when a field is selected for edit.
+- [x] Step 2: Add a new MessageHandler to handle messages when editing is active.
+- [x] Step 3: Remove NEW_VALUE from the ConversationHandler states.
+- [x] Step 4: Adjust edit_value_received function to work with the new message handler and add validation.
+- [x] Step 5: Test the bot to ensure fixes work.

@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Marketplace</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, sans-serif; background: white; color: black; padding: 16px; }
+        .container { max-width: 100%; }
+        .header { text-align: center; margin-bottom: 24px; padding: 16px 0; }
+        .header h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+        .nav-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
+        .nav-card { background: #f8f9fa; border-radius: 16px; padding: 20px; text-align: center; text-decoration: none; color: black; }
+        .nav-card:active { transform: scale(0.98); background: #007aff; color: white; }
+        .nav-icon { font-size: 24px; margin-bottom: 8px; display: block; }
+        .nav-title { font-weight: 600; font-size: 14px; }
+        .stats-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; margin-bottom: 24px; }
+        .stat-card { background: #f8f9fa; border-radius: 12px; padding: 16px; text-align: center; }
+        .stat-number { font-size: 20px; font-weight: 700; margin-bottom: 4px; color: #007aff; }
+        .stat-label { font-size: 12px; color: #666; }
+        .recent-items { background: #f8f9fa; border-radius: 16px; padding: 16px; margin-bottom: 20px; }
+        .section-title { font-size: 16px; font-weight: 600; margin-bottom: 12px; }
+        .item-card { background: white; border-radius: 12px; padding: 12px; margin-bottom: 8px; border: 1px solid #e5e5e5; }
+        .item-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+        .item-title { font-weight: 600; font-size: 14px; flex: 1; }
+        .item-price { font-weight: 700; color: #007aff; font-size: 14px; }
+        .empty-state { text-align: center; padding: 20px; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🛍️ Marketplace</h1>
+            <p>Buy and sell securely</p>
+        </div>
+        
+        <div class="nav-grid">
+            <a href="/marketplace" class="nav-card">
+                <span class="nav-icon">📱</span>
+                <span class="nav-title">Browse All</span>
+            </a>
+            <a href="/add_item" class="nav-card">
+                <span class="nav-icon">➕</span>
+                <span class="nav-title">Sell Item</span>
+            </a>
+            <a href="/my_items" class="nav-card">
+                <span class="nav-icon">📦</span>
+                <span class="nav-title">My Items</span>
+            </a>
+            <button class="nav-card" onclick="refreshApp()">
+                <span class="nav-icon">🔄</span>
+                <span class="nav-title">Refresh</span>
+            </button>
+        </div>
+        
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-number">{{ total_items }}</div>
+                <div class="stat-label">Total Items</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-number">{{ total_users }}</div>
+                <div class="stat-label">Total Users</div>
+            </div>
+        </div>
+        
+        <div class="recent-items">
+            <div class="section-title">Recently Added</div>
+            
+            {% if recent_items %}
+                {% for item in recent_items %}
+                <div class="item-card">
+                    <div class="item-header">
+                        <div class="item-title">{{ item.emoji }} {{ item.title }}</div>
+                        <div class="item-price">${{ "%.2f"|format(item.price) }}</div>
+                    </div>
+                    <div style="font-size: 12px; color: #666;">
+                        {{ item.category_name }} • by {{ item.username or item.first_name }}
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    No items yet. Be the first to add one!
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        
+        function refreshApp() {
+            window.location.reload();
+        }
+    </script>
+</body>
+</html>

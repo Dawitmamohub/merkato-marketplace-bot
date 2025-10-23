@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Add Item</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, sans-serif; background: white; color: black; padding: 16px; }
+        .container { max-width: 100%; }
+        .back-button { background: none; border: none; color: #007aff; font-size: 16px; padding: 8px 0; margin-bottom: 16px; }
+        .header { text-align: center; margin-bottom: 24px; }
+        .header h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+        .form-group { margin-bottom: 16px; }
+        .form-label { display: block; font-size: 14px; font-weight: 600; margin-bottom: 8px; }
+        .form-input, .form-textarea, .form-select { width: 100%; padding: 12px; border: 1px solid #ddd; border-radius: 12px; background: white; color: black; font-size: 14px; }
+        .form-textarea { height: 100px; resize: vertical; }
+        .btn { background: #007aff; color: white; border: none; border-radius: 12px; padding: 16px 20px; font-size: 16px; font-weight: 600; width: 100%; cursor: pointer; margin-top: 8px; }
+        .btn:active { opacity: 0.8; transform: scale(0.98); }
+        .success { text-align: center; padding: 40px 20px; display: none; }
+        .error { color: red; font-size: 12px; margin-top: 4px; display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <button class="back-button" onclick="goBack()">← Back to Marketplace</button>
+        
+        <div class="header">
+            <h1>➕ Add New Item</h1>
+            <p>List your item for sale</p>
+        </div>
+        
+        <form id="addItemForm">
+            <div class="form-group">
+                <label class="form-label" for="title">Item Title *</label>
+                <input type="text" id="title" class="form-input" placeholder="e.g., Vintage Camera, iPhone 13" required>
+                <div class="error" id="titleError">Please enter a title</div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label" for="description">Description *</label>
+                <textarea id="description" class="form-textarea" placeholder="Describe your item's condition, features, etc." required></textarea>
+                <div class="error" id="descriptionError">Please enter a description</div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label" for="price">Price ($) *</label>
+                <input type="number" id="price" class="form-input" placeholder="0.00" step="0.01" min="0" required>
+                <div class="error" id="priceError">Please enter a valid price</div>
+            </div>
+            
+            <div class="form-group">
+                <label class="form-label" for="category">Category *</label>
+                <select id="category" class="form-select" required>
+                    <option value="">Select a category</option>
+                    {% for category in categories %}
+                    <option value="{{ category.id }}">{{ category.emoji }} {{ category.name }}</option>
+                    {% endfor %}
+                </select>
+                <div class="error" id="categoryError">Please select a category</div>
+            </div>
+            
+            <button type="submit" class="btn">List Item for Sale</button>
+        </form>
+        
+        <div class="success" id="successMessage">
+            <h3>✅ Item Added Successfully!</h3>
+            <p>Your item has been listed in the marketplace.</p>
+            <button class="btn" onclick="goBack()">Back to Marketplace</button>
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        
+        function goBack() {
+            window.location.href = '/';
+        }
+        
+        document.getElementById('addItemForm').addEventListener('submit', function(e) {
+            e.preventDefault();
+            
+            // Validate form
+            const title = document.getElementById('title').value.trim();
+            const description = document.getElementById('description').value.trim();
+            const price = parseFloat(document.getElementById('price').value);
+            const category = document.getElementById('category').value;
+            
+            let isValid = true;
+            
+            // Reset errors
+            document.querySelectorAll('.error').forEach(el => el.style.display = 'none');
+            
+            if (!title) {
+                document.getElementById('titleError').style.display = 'block';
+                isValid = false;
+            }
+            
+            if (!description) {
+                document.getElementById('descriptionError').style.display = 'block';
+                isValid = false;
+            }
+            
+            if (!price || price <= 0) {
+                document.getElementById('priceError').style.display = 'block';
+                isValid = false;
+            }
+            
+            if (!category) {
+                document.getElementById('categoryError').style.display = 'block';
+                isValid = false;
+            }
+            
+            if (!isValid) return;
+            
+            // Create item data
+            const itemData = {
+                action: 'add_item',
+                title: title,
+                description: description,
+                price: price,
+                category_id: parseInt(category)
+            };
+            
+            // Send data back to bot
+            tg.sendData(JSON.stringify(itemData));
+            
+            // Show success message
+            document.getElementById('addItemForm').style.display = 'none';
+            document.getElementById('successMessage').style.display = 'block';
+            
+            // Close web app after 3 seconds
+            setTimeout(() => {
+                tg.close();
+            }, 3000);
+        });
+    </script>
+</body>
+</html>

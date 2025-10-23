@@ -1,0 +1,168 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Browse Marketplace</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, sans-serif; background: white; color: black; padding: 16px; }
+        .container { max-width: 100%; }
+        .back-button { background: none; border: none; color: #007aff; font-size: 16px; padding: 8px 0; margin-bottom: 16px; }
+        .header { text-align: center; margin-bottom: 20px; }
+        .header h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+        .stats { display: flex; justify-content: space-around; margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 12px; }
+        .stat { text-align: center; }
+        .stat-number { font-size: 18px; font-weight: 700; color: #007aff; }
+        .stat-label { font-size: 12px; color: #666; }
+        .items-grid { display: flex; flex-direction: column; gap: 12px; margin-bottom: 80px; }
+        .item-card { background: white; border: 1px solid #e5e5e5; border-radius: 12px; padding: 16px; cursor: pointer; }
+        .item-card:active { transform: scale(0.98); background: #f8f9fa; }
+        .item-header { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px; }
+        .item-title { font-weight: 600; font-size: 16px; flex: 1; }
+        .item-price { font-weight: 700; color: #007aff; font-size: 16px; }
+        .item-description { color: #666; font-size: 14px; margin-bottom: 8px; line-height: 1.4; }
+        .item-meta { display: flex; justify-content: space-between; align-items: center; font-size: 12px; color: #888; }
+        .item-category { background: #007aff; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; }
+        .item-seller { font-size: 12px; color: #666; }
+        .empty-state { text-align: center; padding: 40px 20px; color: #666; }
+        .empty-state-icon { font-size: 48px; margin-bottom: 16px; opacity: 0.5; }
+        .refresh-btn { background: #007aff; color: white; border: none; border-radius: 12px; padding: 12px 20px; font-size: 14px; width: 100%; margin-top: 16px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <button class="back-button" onclick="goBack()">← Back to Home</button>
+        
+        <div class="header">
+            <h1>🛍️ Marketplace</h1>
+            <p>Browse all available items</p>
+        </div>
+        
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-number">{{ items|length }}</div>
+                <div class="stat-label">Items</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number" id="active-sellers">∞</div>
+                <div class="stat-label">Sellers</div>
+            </div>
+        </div>
+        
+        <div class="items-grid" id="items-grid">
+            {% if items %}
+                {% for item in items %}
+                <div class="item-card" onclick="showItemActions({{ item.id }}, {{ item.seller_id }})">
+                    <div class="item-header">
+                        <div class="item-title">{{ item.emoji }} {{ item.title }}</div>
+                        <div class="item-price">${{ "%.2f"|format(item.price) }}</div>
+                    </div>
+                    
+                    {% if item.description %}
+                    <div class="item-description">
+                        {{ item.description[:100] }}{% if item.description|length > 100 %}...{% endif %}
+                    </div>
+                    {% endif %}
+                    
+                    <div class="item-meta">
+                        <span class="item-category">{{ item.category_name }}</span>
+                        <span class="item-seller">
+                            👤 {{ item.username or item.first_name }}
+                        </span>
+                    </div>
+                    
+                    <div class="item-meta">
+                        <span>👁️ {{ item.views or 0 }} views</span>
+                        <span>❤️ {{ item.likes or 0 }} likes</span>
+                        <span>📅 {{ item.created_at[:10] }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    <div class="empty-state-icon">🏪</div>
+                    <div>No items available yet</div>
+                    <div style="font-size: 12px; margin-top: 8px;">Be the first to add an item!</div>
+                </div>
+            {% endif %}
+        </div>
+        
+        <button class="refresh-btn" onclick="refreshItems()">🔄 Refresh Items</button>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        
+        function goBack() {
+            window.location.href = '/';
+        }
+        
+        function showItemActions(itemId, sellerId) {
+            tg.showPopup({
+                title: 'Item Actions',
+                message: 'What would you like to do with this item?',
+                buttons: [
+                    {id: 'buy', type: 'default', text: '🛒 Buy Now'},
+                    {id: 'contact', type: 'default', text: '📞 Contact Seller'},
+                    {id: 'like', type: 'default', text: '❤️ Like Item'},
+                    {id: 'cancel', type: 'cancel'}
+                ]
+            }, function(buttonId) {
+                if (buttonId === 'buy') {
+                    purchaseItem(itemId);
+                } else if (buttonId === 'contact') {
+                    contactSeller(sellerId);
+                } else if (buttonId === 'like') {
+                    likeItem(itemId);
+                }
+            });
+        }
+        
+        function purchaseItem(itemId) {
+            fetch('/api/purchase', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({ item_id: itemId })
+            })
+            .then(response => response.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    tg.showAlert('✅ Purchase completed! The item is yours.');
+                    // Remove the purchased item from view
+                    document.querySelector(`[onclick="showItemActions(${itemId})"]`).remove();
+                } else {
+                    tg.showAlert('❌ Purchase failed: ' + data.message);
+                }
+            })
+            .catch(error => {
+                tg.showAlert('❌ Error: ' + error.message);
+            });
+        }
+        
+        function contactSeller(sellerId) {
+            tg.sendData(JSON.stringify({
+                action: 'contact_seller',
+                seller_id: sellerId
+            }));
+            tg.showAlert('📞 Contacting seller... They will respond soon!');
+        }
+        
+        function likeItem(itemId) {
+            tg.sendData(JSON.stringify({
+                action: 'like_item',
+                item_id: itemId
+            }));
+            tg.showAlert('❤️ Item liked!');
+        }
+        
+        function refreshItems() {
+            window.location.reload();
+        }
+    </script>
+</body>
+</html>

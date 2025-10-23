@@ -1,0 +1,99 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>My Items</title>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, sans-serif; background: white; color: black; padding: 16px; }
+        .container { max-width: 100%; }
+        .back-button { background: none; border: none; color: #007aff; font-size: 16px; padding: 8px 0; margin-bottom: 16px; }
+        .header { text-align: center; margin-bottom: 20px; }
+        .header h1 { font-size: 24px; font-weight: 700; margin-bottom: 8px; }
+        .stats { display: flex; justify-content: space-around; margin-bottom: 20px; padding: 15px; background: #f8f9fa; border-radius: 12px; }
+        .stat { text-align: center; }
+        .stat-number { font-size: 18px; font-weight: 700; color: #007aff; }
+        .stat-label { font-size: 12px; color: #666; }
+        .items-grid { display: flex; flex-direction: column; gap: 12px; }
+        .item-card { background: white; border: 1px solid #e5e5e5; border-radius: 12px; padding: 16px; }
+        .item-header { display: flex; justify-content: space-between; margin-bottom: 8px; }
+        .item-title { font-weight: 600; font-size: 16px; flex: 1; }
+        .item-price { font-weight: 700; color: #007aff; }
+        .item-meta { display: flex; justify-content: space-between; font-size: 12px; color: #888; }
+        .status-available { color: #34c759; font-weight: 600; }
+        .status-sold { color: #ff3b30; font-weight: 600; }
+        .empty-state { text-align: center; padding: 40px 20px; color: #666; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <button class="back-button" onclick="goBack()">← Back</button>
+        
+        <div class="header">
+            <h1>📦 My Items</h1>
+            <p>Your listed items and stats</p>
+        </div>
+        
+        <div class="stats">
+            <div class="stat">
+                <div class="stat-number">{{ stats.total_items or 0 }}</div>
+                <div class="stat-label">Total</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">{{ stats.sold_items or 0 }}</div>
+                <div class="stat-label">Sold</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">${{ "%.2f"|format(stats.revenue or 0) }}</div>
+                <div class="stat-label">Revenue</div>
+            </div>
+            <div class="stat">
+                <div class="stat-number">{{ stats.total_views or 0 }}</div>
+                <div class="stat-label">Views</div>
+            </div>
+        </div>
+        
+        <div class="items-grid">
+            {% if items %}
+                {% for item in items %}
+                <div class="item-card">
+                    <div class="item-header">
+                        <div class="item-title">{{ item.emoji }} {{ item.title }}</div>
+                        <div class="item-price">${{ "%.2f"|format(item.price) }}</div>
+                    </div>
+                    
+                    <div class="item-meta">
+                        <span class="item-category">{{ item.category_name }}</span>
+                        <span class="status-{{ item.status }}">
+                            {% if item.status == 'available' %}✅ Available{% else %}💰 Sold{% endif %}
+                        </span>
+                    </div>
+                    
+                    <div class="item-meta">
+                        <span>👁️ {{ item.views or 0 }} views</span>
+                        <span>❤️ {{ item.likes or 0 }} likes</span>
+                        <span>📅 {{ item.created_at[:10] }}</span>
+                    </div>
+                </div>
+                {% endfor %}
+            {% else %}
+                <div class="empty-state">
+                    <div>No items listed yet.</div>
+                    <div style="font-size: 12px; margin-top: 8px;"><a href="/add_item">Add your first item!</a></div>
+                </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <script>
+        const tg = window.Telegram.WebApp;
+        tg.expand();
+        
+        function goBack() {
+            window.location.href = '/';
+        }
+    </script>
+</body>
+</html>
